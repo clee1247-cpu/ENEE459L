@@ -1,0 +1,85 @@
+{
+    "module_model": {
+        "value": "NVIDIA Jetson Orin Nano Engineering Reference Developer Kit Super",
+        "source": "/proc/device-tree/model",
+        "status": "ok"
+    },
+    "memory_total_kb": {
+        "value": 7789948,
+        "source": "/proc/meminfo",
+        "status": "ok"
+    },
+    "root_source": {
+        "value": "/dev/nvme0n1p1",
+        "kind": "nvme",
+        "source": "/proc/mounts",
+        "status": "ok"
+    },
+    "nvme_present": {
+        "value": true,
+        "model": "PNY CS2241 500GB SSD",
+        "source": "/sys/block/nvme0n1",
+        "status": "ok"
+    },
+    "pcie_link": {
+        "value": "LnkSta:\tSpeed 2.5GT/s (ok), Width x1 (ok)",
+        "negotiated": {
+            "raw": "LnkSta:\tSpeed 2.5GT/s (ok), Width x1 (ok)",
+            "gts": 2.5,
+            "width": 1,
+            "gen": 1
+        },
+        "capability": {
+            "raw": "LnkCap:\tPort #0, Speed 2.5GT/s, Width x1, ASPM L0s L1, Exit Latency L0s unlimited, L1 <64us",
+            "gts": 2.5,
+            "width": 1,
+            "gen": 1
+        },
+        "interpretation": "link running at its full capability, Gen1 x1",
+        "source": "lspci -vv",
+        "status": "ok"
+    },
+    "thermal_zones": {
+        "value": 53.437,
+        "zones": [
+            {
+                "zone": "thermal_zone0",
+                "type": "cpu-thermal",
+                "temp_c": 52.5
+            },
+            {
+                "zone": "thermal_zone1",
+                "type": "gpu-thermal",
+                "temp_c": 53.437
+            },
+            {
+                "zone": "thermal_zone5",
+                "type": "soc0-thermal",
+                "temp_c": 52.343
+            },
+            {
+                "zone": "thermal_zone6",
+                "type": "soc1-thermal",
+                "temp_c": 53.125
+            },
+            {
+                "zone": "thermal_zone7",
+                "type": "soc2-thermal",
+                "temp_c": 52.218
+            },
+            {
+                "zone": "thermal_zone8",
+                "type": "tj-thermal",
+                "temp_c": 53.281
+            }
+        ],
+        "source": "/sys/class/thermal/thermal_zone*/temp",
+        "status": "ok"
+    },
+    "power_mode": {
+        "value": "MAXN_SUPER",
+        "mode_id": 2,
+        "source": "nvpmodel -q",
+        "status": "ok"
+    }
+}

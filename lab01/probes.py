@@ -93,21 +93,6 @@ def _parse_link_line(line: str) -> dict[str, Any]:
         "gen": _GEN_BY_GTS.get(gts) if gts is not None else None,
     }
 
-def generate_interpretation_string(neg_speed, cap_speed):
-    if cap_speed > neg_speed:
-        interpretation = (
-            f"drive capable of Gen{capability['gen']}, link running at "
-            f"Gen{negotiated['gen']} — expected on this carrier board, "
-            "whose M.2 Key-M slot is wired Gen3 x4"
-        )
-    else:
-        interpretation = (
-            f"link running at its full capability, Gen{negotiated['gen']} "
-            f"x{negotiated['width']}"
-        )
-    return interpretation
-    
-
 
 # ---------------------------------------------------------------------------
 # The probes.
@@ -134,7 +119,6 @@ def probe_module_model(root: Path = Path("/")) -> dict[str, Any]:
     raw = raw.rstrip("\x00").strip()
     return {"value": raw, "source": src, "status": "ok"}
 
-# todo by students
 def probe_memory_total_kb(root: Path = Path("/")) -> dict[str, Any]:
     """How much memory is there, in kB, as the kernel counts it?
 
@@ -143,6 +127,16 @@ def probe_memory_total_kb(root: Path = Path("/")) -> dict[str, Any]:
     ever sees the pool. Students are expected to notice and to explain it in
     their report rather than round it up.
     """
+    src = "/proc/meminfo"
+    raw = read_text(root, src)
+    
+    if not raw:
+        return unknown(src, "/proc/meminfo not available")
+    
+    # Extract MemTotal using regex pattern: ^MemTotal:\s+(\d+)\s*kB
+    m = re.search(r"^MemTotal:\s+(\d+)\s*kB", raw, re.MULTILINE)
+    if not m:
+        return unknown(src, "MemTotal field not found in /proc/meminfo")
     
     return {"value": int(m.group(1)), "source": src, "status": "ok"}
 
@@ -159,6 +153,35 @@ def probe_root_source(root: Path = Path("/")) -> dict[str, Any]:
     /proc/mounts is preferred over `findmnt` because it needs no external
     binary and no elevation, and because it is what findmnt reads anyway.
     """
+    src = "/proc/mounts"
+    raw = read_text(root, src)
+    
+    if not raw:
+        return unknown(src, "/proc/mounts not available")
+    
+    # Parse /proc/mounts to find the root (/) mount
+    for line in raw.split("\n"):
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        device = parts[0]
+        mount_point = parts[1]
+        
+        if mount_point == "/":
+            # Determine device kind based on device name
+            if device.startswith("/dev/nvme"):
+                kind = "nvme"
+            elif device.startswith("/dev/mmcblk") or device.startswith("/dev/sd"):
+                kind = "ssd"
+            else:
+                kind = "unknown"
+            
+            return {
+                "value": device,
+                "kind": kind,
+                "source": src,
+                "status": "ok"
+            }
     
     return unknown(src, "no root mount entry found in mount table")
 
@@ -171,11 +194,34 @@ def probe_nvme_present(root: Path = Path("/")) -> dict[str, Any]:
     is what lets the troubleshooting tree in the lab guide send a student to
     the right branch.
     """
+    src = "/sys/block/nvme0n1"
+    
+    # Check if /sys/block/nvme0n1 exists
+    nvme_path = Path(root) / "sys/block/nvme0n1"
+    present = nvme_path.exists()
+    
+    if not present:
+        return {
+            "value": False,
+            "model": None,
+            "source": src,
+            "status": "ok",
+        }
+    
+    # Read the model name from /sys/block/nvme0n1/device/model
+    model_path = "/sys/block/nvme0n1/device/model"
+    model = read_text(root, model_path)
+    
+    if model:
+        # Remove all null spaces using regex
+        model = re.sub(r"\s+", " ", model).strip()
+    else:
+        model = None
     
     return {
-        "value": ,
-        "model": ,
-        "source": ,
+        "value": present,
+        "model": model,
+        "source": src,
         "status": "ok",
     }
 
@@ -191,13 +237,60 @@ def probe_pcie_link(root: Path = Path("/"), lspci_output: str | None = None) -> 
     `lspci_output` exists so the tests can drive this without root or hardware.
     In normal use it is None and the probe shells out.
     """
+    src = "lspci -vv"
+    
+    # Get lspci output if not provided
+    if lspci_output is None:
+        lspci_output = run(["lspci", "-vv"])
+    
+    if not lspci_output:
+        return unknown(src, "lspci -vv command failed or not available")
+    
+    # Extract LnkCap and LnkSta lines
+    cap_line = None
+    sta_line = None
+    
+    for line in lspci_output.split("\n"):
+        if "LnkCap:" in line:
+            cap_line = line
+        elif "LnkSta:" in line:
+            sta_line = line
+    
+    if not cap_line or not sta_line:
+        return unknown(src, "LnkCap or LnkSta line not found in lspci output")
+    
+    # Parse using helper function
+    capability = _parse_link_line(cap_line)
+    negotiated = _parse_link_line(sta_line)
+    
+    # Generate interpretation string
+    if capability["gts"] and negotiated["gts"]:
+        cap_speed = capability["gts"]
+        neg_speed = negotiated["gts"]
         
+        if cap_speed > neg_speed:
+            interpretation = (
+                f"drive capable of Gen{capability['gen']}, link running at "
+                f"Gen{negotiated['gen']} — expected on this carrier board, "
+                "whose M.2 Key-M slot is wired Gen3 x4"
+            )
+        else:
+            interpretation = (
+                f"link running at its full capability, Gen{negotiated['gen']} "
+                f"x{negotiated['width']}"
+            )
+    else:
+        interpretation = "unable to determine link speeds"
+    
+    # Format value from LnkSta line
+    value = negotiated["raw"]
+    
     return {
-        "value":,
-        "negotiated": ,
-        "capability": ,
-        "interpretation": ,
-        "source": ,
+        "value": value,
+        "negotiated": negotiated,
+        "capability": capability,
+        "interpretation": interpretation,
+        "source": src,
         "status": "ok",
     }
 
@@ -210,10 +303,68 @@ def probe_thermal_zones(root: Path = Path("/")) -> dict[str, Any]:
     than once, and it is a good, cheap lesson in reading units before reading
     numbers.
     """
+    src = "/sys/class/thermal/thermal_zone*/temp"
+    
+    thermal_dir = Path(root) / "sys/class/thermal"
+    zones_list = []
+    max_temp = None
+    
+    try:
+        # Iterate over all thermal_zone* subdirectories
+        for zone_path in sorted(thermal_dir.glob("thermal_zone*")):
+            if not zone_path.is_dir():
+                continue
+                
+            zone_name = zone_path.name
+            
+            # Read type from ./type file
+            type_file = zone_path / "type"
+            zone_type = None
+            try:
+                zone_type = read_text(root, str(type_file.relative_to(root)))
+            except Exception:
+                continue
+            
+            if not zone_type:
+                continue
+            
+            # Read temp from ./temp file
+            temp_file = zone_path / "temp"
+            temp_str = None
+            try:
+                temp_str = read_text(root, str(temp_file.relative_to(root)))
+            except Exception:
+                continue
+            
+            if not temp_str:
+                continue
+            
+            try:
+                temp_millidegrees = int(temp_str)
+                temp_celsius = temp_millidegrees / 1000.0
+            except (ValueError, TypeError):
+                continue
+            
+            zones_list.append({
+                "zone": zone_name,
+                "type": zone_type,
+                "temp_c": temp_celsius
+            })
+            
+            # Track maximum temperature
+            if max_temp is None or temp_celsius > max_temp:
+                max_temp = temp_celsius
+    
+    except (OSError, FileNotFoundError):
+        return unknown(src, "thermal zone directory not found")
+    
+    if not zones_list or max_temp is None:
+        return unknown(src, "no thermal zones found or unable to read temperatures")
+    
     return {
-        "value": ,
-        "zones": ,
-        "source": ,
+        "value": max_temp,
+        "zones": zones_list,
+        "source": src,
         "status": "ok",
     }
 
@@ -226,10 +377,51 @@ def probe_power_mode(root: Path = Path("/"), nvpmodel_output: str | None = None)
     same model are usually reporting different power modes, and without this
     field there is no way to find that out after the fact.
     """
+    src = "nvpmodel -q"
+    
+    # Get nvpmodel output if not provided
+    if nvpmodel_output is None:
+        nvpmodel_output = run(["nvpmodel", "-q"])
+    
+    if not nvpmodel_output:
+        return unknown(src, "nvpmodel -q command failed or not available")
+    
+    # Extract the mode name string using regex: NV Power Mode:\s*(.+)
+    mode_match = re.search(r"NV Power Mode:\s*(.+)", nvpmodel_output)
+    if not mode_match:
+        return unknown(src, "NV Power Mode field not found in nvpmodel output")
+    
+    mode_name = mode_match.group(1).strip()
+    
+    # Extract the integer mode_id from the standalone numeric line
+    # The mode_id is on the next line after "NV Power Mode:" in the output
+    mode_id = None
+    lines = nvpmodel_output.strip().split("\n")
+    for i, line in enumerate(lines):
+        if "NV Power Mode:" in line:
+            # Check the next line for the mode_id
+            if i + 1 < len(lines):
+                id_line = lines[i + 1].strip()
+                id_match = re.search(r"^\s*(\d+)\s*$", id_line)
+                if id_match:
+                    mode_id = int(id_match.group(1))
+                    break
+    
+    if mode_id is None:
+        return unknown(src, "mode_id not found in nvpmodel output")
+    
+    # Format the value - use mode_name or look for power pattern if available
+    power_match = re.search(r"(\d+W)", nvpmodel_output)
+    if power_match:
+        mode_value = power_match.group(1)
+    else:
+        # Use the mode name as the value (e.g., "MAXN_SUPER")
+        mode_value = mode_name
+    
     return {
-        "value": ,
-        "mode_id": ,
-        "source": ,
+        "value": mode_value,
+        "mode_id": mode_id,
+        "source": src,
         "status": "ok",
     }
 
