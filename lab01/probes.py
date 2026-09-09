@@ -445,5 +445,3 @@ if __name__ == "__main__":
     path = "system_report.json"
     with open(path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=4)
-
-test
