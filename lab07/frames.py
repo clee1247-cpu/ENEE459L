@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from typing import Any, Iterable, Sequence
+import math
 
 from schema import BLACK_MAX, FLAT_SPREAD
+
+DARK_MEAN = 0.10
 
 import cv2
 import time
@@ -114,37 +117,89 @@ def grab_frame(pipeline: str, warmup_frames: int = 15) -> np.ndarray:
 ############################
 
 def frame_bytes(width: int, height: int, fmt: str) -> int:
-    pass
+    if (isinstance(width, bool) or not isinstance(width, int) or width <= 0 or
+            isinstance(height, bool) or not isinstance(height, int) or height <= 0):
+        raise FrameError("width and height must be positive integers")
+    return math.ceil(width * height * _bytes_per_pixel(fmt))
 
 
 def bytes_per_second(width: int, height: int, fmt: str, fps: float) -> float:
-    pass
+    if isinstance(fps, bool) or not isinstance(fps, (int, float)) or fps <= 0:
+        raise FrameError("fps must be positive")
+    return frame_bytes(width, height, fmt) * fps
 
 
 def frame_stats(pixels: Sequence[float] | Iterable[float]) -> dict[str, float]:
-    pass
+    values = [float(value) for value in pixels]
+    if not values:
+        raise FrameError("pixels must contain at least one value")
+
+    count = len(values)
+    mean = sum(values) / count
+    variance = sum((value - mean) ** 2 for value in values) / count
+    minimum = min(values)
+    maximum = max(values)
+    return {
+        "min": minimum,
+        "max": maximum,
+        "mean": mean,
+        "spread": maximum - minimum,
+        "sd": math.sqrt(variance),
+        "samples": float(count),
+    }
 
 
 def classify(stats: dict[str, float]) -> tuple[str, str]:
-    pass
+    required = ("max", "spread", "mean")
+    missing = [key for key in required if key not in stats]
+    if missing:
+        raise FrameError(f"stats missing required keys: {', '.join(missing)}")
+
+    maximum = stats["max"]
+    spread = stats["spread"]
+    mean = stats["mean"]
+    if maximum <= BLACK_MAX:
+        return "black", f"max {maximum:.4f} <= {BLACK_MAX:.4f}. No sensor response."
+    if spread < FLAT_SPREAD:
+        return "flat", f"spread {spread:.4f} < {FLAT_SPREAD:.2f}. No visible structure."
+    if mean < DARK_MEAN:
+        return "dark", f"mean {mean:.4f} < {DARK_MEAN:.2f}. Underexposed but structured."
+    return "scene", f"mean {mean:.4f}, spread {spread:.4f}. Exposed and structured."
 
 
 def conversion_bytes(width: int, height: int, src: str, dst: str) -> int:
-    pass
+    if str(src).lower() == str(dst).lower():
+        return 0
+    return frame_bytes(width, height, src) + frame_bytes(width, height, dst)
 
 
 def resize_bytes(src_w: int, src_h: int, dst_w: int, dst_h: int,
                  fmt: str) -> int:
-    pass
+    return frame_bytes(src_w, src_h, fmt) + frame_bytes(dst_w, dst_h, fmt)
 
 
 def normalise_bytes(width: int, height: int, channels: int = 3,
                     out_bytes: int = 4) -> int:
-    pass
+    dimensions = (width, height, channels, out_bytes)
+    if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0
+           for value in dimensions):
+        raise FrameError("width, height, channels, and out_bytes must be positive integers")
+    scalar_count = width * height * channels
+    return scalar_count * (1 + out_bytes)
 
 
 def summarise_formats(width: int, height: int) -> list[dict[str, Any]]:
-    pass
+    baseline = frame_bytes(width, height, "rgb")
+    return [
+        {
+            "format": fmt,
+            "bytes_per_pixel": _bytes_per_pixel(fmt),
+            "bytes": frame_bytes(width, height, fmt),
+            "relative_to_rgb": frame_bytes(width, height, fmt) / baseline,
+            "note": FORMAT_NOTES[fmt],
+        }
+        for fmt in FORMATS
+    ]
 
 
 ###############################
