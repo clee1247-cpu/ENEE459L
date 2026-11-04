@@ -64,36 +64,17 @@ def detect_faces(image_path, output_path="output_detected.png", conf_threshold=0
         providers=available_providers
     )
     input_name = session.get_inputs()[0].name
-    outputs = session.run(None, {input_name: data})
-    confidences = outputs[0][0]
-    locations = outputs[1][0]
+    scores, boxes = session.run(None, {input_name: data})
+    scores = scores[0]
+    boxes = boxes[0]
 
-    min_boxes = [[10, 16, 24], [32, 48], [64, 96], [128, 192, 256]]
-    feature_maps = [[30, 40], [15, 20], [8, 10], [4, 5]]
-    steps = [8, 16, 32, 64]
-    priors = []
-
-    for index in range(len(feature_maps)):
-        for y in range(feature_maps[index][0]):
-            for x in range(feature_maps[index][1]):
-                for box_size in min_boxes[index]:
-                    center_x = (x + 0.5) * steps[index] / 320
-                    center_y = (y + 0.5) * steps[index] / 320
-                    width = box_size / 320
-                    height = box_size / 320
-                    priors.append([center_x, center_y, width, height])
-
-    priors = np.array(priors)
-    boxes = np.empty_like(locations)
-    boxes[:, :2] = locations[:, :2] * 0.1 * priors[:, 2:] + priors[:, :2]
-    boxes[:, 2:] = np.exp(locations[:, 2:] * 0.2) * priors[:, 2:]
-    boxes[:, :2] = boxes[:, :2] - boxes[:, 2:] / 2
-    boxes[:, 2:] = boxes[:, :2] + boxes[:, 2:]
-
-    scores = confidences[:, 1]
-    selected = scores > conf_threshold
-    box_scores = np.concatenate((boxes[selected], scores[selected, None]), axis=1)
-    picked = hard_nms(box_scores, 0.5, top_k=1)
+    face_scores = scores[:, 1]
+    selected = face_scores >= conf_threshold
+    box_scores = np.column_stack((boxes[selected], face_scores[selected]))
+    if len(box_scores) > 0:
+        picked = hard_nms(box_scores, 0.3)
+    else:
+        picked = np.empty((0, 5), dtype=np.float32)
 
     draw = ImageDraw.Draw(image)
     for box_score in picked:
