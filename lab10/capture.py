@@ -117,39 +117,118 @@ def wav_bytes(
     seconds: float,
     header_bytes: int = WAV_HEADER_BYTES,
 ) -> dict[str, Any]:
-    pass
+    _positive_int(sample_rate, "sample_rate")
+    block = block_align(channels, bit_depth)
+    samples = round(sample_rate * seconds)
+    byte_rate = sample_rate * block
+    data_bytes = samples * block
+    return {
+        "samples": samples,
+        "block_align": block,
+        "byte_rate": byte_rate,
+        "data_bytes": data_bytes,
+        "header_bytes": header_bytes,
+        "total_bytes": header_bytes + data_bytes,
+    }
 
 
 def duration_from_bytes(
     data_bytes: int, sample_rate: int, channels: int, bit_depth: int
 ) -> dict[str, Any]:
-    pass
+    block = block_align(channels, bit_depth)
+    samples = data_bytes // block
+    remainder = data_bytes % block
+    return {
+        "samples": samples,
+        "seconds": samples / sample_rate,
+        "remainder": remainder,
+        "whole": remainder == 0,
+    }
 
 
 def header_consistency(
     header: dict[str, Any], audio: dict[str, Any]
 ) -> dict[str, Any]:
-    pass
+    mismatches = []
+    for key in ("sample_rate", "channels", "bit_depth"):
+        if header[key] != audio[key]:
+            mismatches.append(key)
+    duration = duration_from_bytes(
+        header["data_bytes"],
+        header["sample_rate"],
+        header["channels"],
+        header["bit_depth"],
+    )
+    return {
+        "agree": len(mismatches) == 0,
+        "mismatches": mismatches,
+        "duration": duration,
+        "stated_seconds": audio["seconds"],
+    }
 
 def dbfs(amplitude: float) -> float | None:
-    pass
+    if amplitude < 0.0 or amplitude > 1.0:
+        raise CaptureError(f"amplitude is {amplitude!r}, which is outside [0, 1].")
+    if amplitude == 0.0:
+        return None
+    return 20.0 * math.log10(amplitude)
 
 
 def bits_in_use(peak_dbfs: float | None, bit_depth: int) -> float:
     _positive_int(bit_depth, "bit_depth")
-    pass
+    if peak_dbfs is None:
+        return 0.0
+    return max(0.0, bit_depth + peak_dbfs / DB_PER_BIT)
 
 
 def level_sentence(level: dict[str, Any]) -> str:
-    pass
+    if level["silent"]:
+        return "digital silence"
+    sentence = (
+        f"peak {level['peak_dbfs']:.2f} dBFS, "
+        f"RMS {level['rms_dbfs']:.2f} dBFS, "
+        f"crest {level['crest_db']:.2f} dB"
+    )
+    if level["clipped"] > 0:
+        sentence += (
+            f", clipped {level['clipped']} samples "
+            f"({level['clip_rate'] * 100:.2f}%)"
+        )
+    return sentence
 
 
 def record_gaps(record: dict[str, Any]) -> dict[str, Any]:
-    pass
+    present = [key for key in THIRTEEN_CHOICES if key in record]
+    missing = [key for key in THIRTEEN_CHOICES if key not in record]
+    blank = [
+        key
+        for key in present
+        if isinstance(record[key], str) and not record[key].strip()
+    ]
+    return {
+        "present": present,
+        "missing": missing,
+        "blank": blank,
+        "complete": len(missing) == 0 and len(blank) == 0,
+        "in_header": list(CHOICES_IN_HEADER),
+        "hand_written": [
+            key for key in THIRTEEN_CHOICES if key not in CHOICES_IN_HEADER
+        ],
+    }
 
 
 def record_sentence(gaps: dict[str, Any]) -> str:
-    pass
+    if gaps["complete"]:
+        return (
+            f"all {len(gaps['present'])} of {len(THIRTEEN_CHOICES)} choices are named "
+            f"({len(gaps['in_header'])} in header, "
+            f"{len(gaps['hand_written'])} handwritten)"
+        )
+    problems = gaps["missing"] + gaps["blank"]
+    return (
+        f"{len(gaps['present'])} of {len(THIRTEEN_CHOICES)} choices are named; "
+        f"{len(problems)} missing ({', '.join(problems)})"
+    )
 
 
 # =====================================================================
