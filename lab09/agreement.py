@@ -82,30 +82,197 @@ def _percentile(xs: Sequence[float], q: float) -> float:
 
 
 def latency_report(ms: Iterable[float]) -> dict[str, Any]:
-    pass
+    samples = []
+    for i, value in enumerate(ms):
+        value = _finite(value, f"ms[{i}]")
+        if value < 0:
+            raise AgreementError(f"ms[{i}] is negative.")
+        samples.append(value)
+
+    if not samples:
+        raise AgreementError("no latency samples.")
+
+    n = len(samples)
+    p50 = _percentile(samples, 50)
+    p95 = _percentile(samples, 95)
+    p99 = _percentile(samples, 99)
+    return {
+        "n": n,
+        "mean": sum(samples) / n,
+        "worst": max(samples),
+        "p50": p50,
+        "p95": p95,
+        "p99": p99,
+        "jitter": p95 - p50,
+    }
 
 
 def speedup(base_ms: float, other_ms: float) -> dict[str, Any]:
-    pass
+    base_ms = _finite(base_ms, "base_ms")
+    other_ms = _finite(other_ms, "other_ms")
+    if base_ms <= 0 or other_ms <= 0:
+        raise AgreementError("execution times must be positive.")
+
+    factor = base_ms / other_ms
+    return {
+        "factor": factor,
+        "faster": factor > 1.0,
+        "saved_ms": base_ms - other_ms,
+    }
 
 
 def max_abs_dev(a: Sequence[float], b: Sequence[float]) -> dict[str, Any]:
-    pass
+    if len(a) == 0 or len(b) == 0:
+        raise AgreementError("sequences must not be empty.")
+    if len(a) != len(b):
+        raise AgreementError("sequences must have matching lengths.")
+
+    a_values = []
+    b_values = []
+    for i in range(len(a)):
+        a_values.append(_finite(a[i], f"a[{i}]"))
+        b_values.append(_finite(b[i], f"b[{i}]"))
+
+    best_i = 0
+    best = abs(a_values[0] - b_values[0])
+    for i in range(1, len(a_values)):
+        current = abs(a_values[i] - b_values[i])
+        if current > best:
+            best = current
+            best_i = i
+
+    return {
+        "max_abs": best,
+        "index": best_i,
+        "a": a_values[best_i],
+        "b": b_values[best_i],
+        "n": len(a_values),
+    }
 
 
 def max_rel_dev(a: Sequence[float], b: Sequence[float],
                 floor: float = REL_FLOOR) -> dict[str, Any]:
-    pass
+    floor = _finite(floor, "floor")
+    if floor <= 0:
+        raise AgreementError("floor must be positive.")
+    if len(a) == 0 or len(b) == 0:
+        raise AgreementError("sequences must not be empty.")
+    if len(a) != len(b):
+        raise AgreementError("sequences must have matching lengths.")
+
+    a_values = []
+    b_values = []
+    for i in range(len(a)):
+        a_values.append(_finite(a[i], f"a[{i}]"))
+        b_values.append(_finite(b[i], f"b[{i}]"))
+
+    best_i = 0
+    best = 0.0
+    floored = 0
+    denom_min = abs(b_values[0])
+    for i in range(len(a_values)):
+        denom = abs(b_values[i])
+        if denom < denom_min:
+            denom_min = denom
+        if denom < floor:
+            floored += 1
+        current = abs(a_values[i] - b_values[i]) / max(denom, floor)
+        if current > best:
+            best = current
+            best_i = i
+
+    return {
+        "max_rel": best,
+        "index": best_i,
+        "floored": floored,
+        "denom_min": denom_min,
+        "n": len(a_values),
+    }
 
 
 def top1_agreement(rows_a: Sequence[Sequence[float]],
                    rows_b: Sequence[Sequence[float]]) -> dict[str, Any]:
-    pass
+    if len(rows_a) == 0 or len(rows_b) == 0:
+        raise AgreementError("rows must not be empty.")
+    if len(rows_a) != len(rows_b):
+        raise AgreementError("row counts must match.")
+
+    agree = 0
+    first_disagreement = None
+    for i in range(len(rows_a)):
+        row_a = rows_a[i]
+        row_b = rows_b[i]
+        if len(row_a) == 0 or len(row_b) == 0:
+            raise AgreementError("rows must not be empty.")
+        if len(row_a) != len(row_b):
+            raise AgreementError("row widths must match.")
+
+        values_a = []
+        values_b = []
+        for j in range(len(row_a)):
+            values_a.append(_finite(row_a[j], f"rows_a[{i}][{j}]"))
+            values_b.append(_finite(row_b[j], f"rows_b[{i}][{j}]"))
+
+        best_a = 0
+        best_b = 0
+        for j in range(1, len(values_a)):
+            if values_a[j] > values_a[best_a]:
+                best_a = j
+            if values_b[j] > values_b[best_b]:
+                best_b = j
+
+        if best_a == best_b:
+            agree += 1
+        elif first_disagreement is None:
+            first_disagreement = i
+
+    n = len(rows_a)
+    return {
+        "n": n,
+        "agree": agree,
+        "disagree": n - agree,
+        "rate": agree / n,
+        "first_disagreement": first_disagreement,
+    }
 
 
 def decision_margin(rows: Sequence[Sequence[float]],
                     tol: float) -> dict[str, Any]:
-    pass
+    tol = _finite(tol, "tol")
+    if tol < 0:
+        raise AgreementError("tol must not be negative.")
+    if len(rows) == 0:
+        raise AgreementError("rows must not be empty.")
+
+    margins = []
+    for i, row in enumerate(rows):
+        if len(row) < 2:
+            raise AgreementError("each row must contain at least two values.")
+        values = []
+        for j, value in enumerate(row):
+            values.append(_finite(value, f"rows[{i}][{j}]"))
+        values.sort(reverse=True)
+        margins.append(values[0] - values[1])
+
+    min_margin = margins[0]
+    argmin = 0
+    below_tol = 0
+    for i, margin in enumerate(margins):
+        if margin < min_margin:
+            min_margin = margin
+            argmin = i
+        if margin < tol:
+            below_tol += 1
+
+    return {
+        "n": len(margins),
+        "min": min_margin,
+        "median": _percentile(margins, 50),
+        "mean": sum(margins) / len(margins),
+        "argmin": argmin,
+        "below_tol": below_tol,
+        "safe": below_tol == 0,
+    }
 
 #############################################################
 ###############  Main function starts here ##################
